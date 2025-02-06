@@ -14,12 +14,13 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.dates as mdates
 from matplotlib.figure import Figure
+from plot_utils import create_habit_progress_plot
 
 class HabitTrackerGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.habit_tracker = HabitTracker()
-        self.wallpaper_generator = WallpaperGenerator()
+        self.wallpaper_generator = WallpaperGenerator(self.habit_tracker)
         
         # Initialize checkbox_layout
         self.checkbox_layout = None
@@ -27,10 +28,10 @@ class HabitTrackerGUI(QMainWindow):
         
         self.init_ui()
         
-        # Set up timer for daily wallpaper update
+        # Set up timer for wallpaper updates
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_wallpaper)
-        self.timer.start(3600000)  # Check every hour
+        self.timer.start(300000)  # Check every 5 minutes (300000 milliseconds)
         
     def init_ui(self):
         self.setWindowTitle('Habit Tracker')
@@ -256,117 +257,17 @@ class HabitTrackerGUI(QMainWindow):
         return canvas
 
     def create_combined_plot(self, selected_habits):
-        # Create figure with more width to accommodate legend
-        fig = Figure(figsize=(12, 6))
-        ax = fig.add_subplot(111)
+        fig, ax = create_habit_progress_plot(self.habit_tracker, selected_habits)
         
-        # Colors for different habits with better contrast
-        colors = ['#1f77b4', '#d62728', '#2ca02c', '#9467bd', '#ff7f0e', '#8c564b', '#e377c2']
-        
-        # Reduced offset for more subtle separation
-        offset = 0.02  # Changed from 0.1 to 0.02
-        
-        # Find the earliest start date among all habits
-        start_date = date.today()
-        end_date = date.today()
-        
-        for habit_id in selected_habits:
-            # Get first log date for this habit
-            self.habit_tracker.cursor.execute("""
-                SELECT MIN(date) FROM habit_logs WHERE habit_id = ?
-            """, (habit_id,))
-            first_date = self.habit_tracker.cursor.fetchone()[0]
-            if first_date:
-                start_date = min(start_date, datetime.strptime(first_date, '%Y-%m-%d').date())
-        
-        # Plot each habit with improvements
-        for i, habit_id in enumerate(selected_habits):
-            color = colors[i % len(colors)]
-            
-            # Get habit info
-            self.habit_tracker.cursor.execute("""
-                SELECT name, type, target_value, default_value 
-                FROM habits WHERE id = ?
-            """, (habit_id,))
-            habit_name, habit_type, target_value, default_value = self.habit_tracker.cursor.fetchone()
-            
-            # Get all logs for this habit
-            self.habit_tracker.cursor.execute("""
-                SELECT DISTINCT date, value 
-                FROM habit_logs 
-                WHERE habit_id = ?
-                GROUP BY date
-                ORDER BY date
-            """, (habit_id,))
-            logs = dict(self.habit_tracker.cursor.fetchall())
-            
-            dates = []
-            values = []
-            current = start_date
-            while current <= end_date:
-                dates.append(current)
-                current_str = current.strftime('%Y-%m-%d')
-                # Add offset to separate overlapping lines
-                value = logs.get(current_str, default_value)
-                if habit_type == 'boolean':
-                    values.append(value + (i * offset))  # Offset each line
-                else:
-                    values.append(value)
-                current += timedelta(days=1)
-            
-            # Plot data with improved visibility
-            if habit_type == 'boolean':
-                line = ax.step(dates, values, where='mid', 
-                             label=f'{habit_name} (Actual)',
-                             color=color, 
-                             alpha=0.7,
-                             linewidth=2,  # Method 2: Thicker lines
-                             marker='o',    # Method 3: Add markers
-                             markersize=4,
-                             markerfacecolor='white')  # Method 4: White-filled markers
-                if target_value:
-                    ax.axhline(y=target_value + (i * offset), 
-                              color=color, 
-                              linestyle='--', 
-                              label=f'{habit_name} (Target)',
-                              alpha=0.5)
-            else:
-                line = ax.plot(dates, values, 
-                             label=f'{habit_name} (Actual)',
-                             color=color, 
-                             alpha=0.7,
-                             linewidth=2,
-                             marker='o',
-                             markersize=4,
-                             markerfacecolor='white')
-                if target_value:
-                    ax.axhline(y=target_value, 
-                              color=color, 
-                              linestyle='--', 
-                              label=f'{habit_name} (Target)',
-                              alpha=0.5)
-        
-        # Customize plot
-        ax.set_title('Habit Progress')
-        ax.set_xlabel('Date')
-        ax.set_ylabel('Value')
-        ax.grid(True, alpha=0.2)  # Lighter grid
-        
-        # Method 5: Move legend outside the plot
-        ax.legend(bbox_to_anchor=(1.05, 1), 
+        # Add GUI-specific adjustments
+        ax.legend(bbox_to_anchor=(1.05, 1),
                  loc='upper left',
                  borderaxespad=0,
-                 frameon=True,  # Add frame
-                 fancybox=True,  # Rounded corners
-                 shadow=True)    # Add shadow
+                 frameon=True,
+                 fancybox=True,
+                 shadow=True)
         
-        # Format x-axis
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
-        fig.autofmt_xdate()
-        
-        # Method 6: Add padding to prevent cutoff
-        fig.tight_layout(rect=[0, 0, 0.85, 1])  # Leave space for legend
+        fig.tight_layout(rect=[0, 0, 0.85, 1])
         
         return FigureCanvas(fig)
 
@@ -489,6 +390,9 @@ class HabitTrackerGUI(QMainWindow):
             # Refresh the progress view to show the updated value
             self.refresh_progress_view()
             
+            # Update wallpaper automatically when habits are modified
+            self.update_wallpaper()
+            
         except sqlite3.Error as e:
             QMessageBox.critical(self, 'Error', f'Error saving habit log: {str(e)}')
 
@@ -544,6 +448,10 @@ class HabitTrackerGUI(QMainWindow):
                 self.habit_tracker.conn.commit()
                 self.refresh_table()
                 QMessageBox.information(self, 'Success', f'Added habit: {name}')
+                
+                # Update wallpaper when new habit is added
+                self.update_wallpaper()
+                
             except Exception as e:
                 QMessageBox.critical(self, 'Error', f'Error adding habit: {str(e)}')
     
@@ -569,13 +477,19 @@ class HabitTrackerGUI(QMainWindow):
                 self.habit_tracker.conn.commit()
                 self.refresh_table()
                 QMessageBox.information(self, 'Success', f'Deleted habit: {habit_name}')
+                
+                # Update wallpaper when habit is deleted
+                self.update_wallpaper()
+                
             except Exception as e:
                 QMessageBox.critical(self, 'Error', f'Error deleting habit: {str(e)}')
     
     def update_wallpaper(self):
         try:
             self.wallpaper_generator.update_wallpaper()
-            QMessageBox.information(self, 'Success', 'Wallpaper updated successfully!')
+            # Don't show success message for automatic updates
+            if self.sender() and isinstance(self.sender(), QPushButton):
+                QMessageBox.information(self, 'Success', 'Wallpaper updated successfully!')
         except Exception as e:
             QMessageBox.critical(self, 'Error', f'Error updating wallpaper: {str(e)}')
 
