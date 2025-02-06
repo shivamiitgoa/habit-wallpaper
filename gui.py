@@ -15,12 +15,14 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.dates as mdates
 from matplotlib.figure import Figure
 from plot_utils import create_habit_progress_plot
+from cron_manager import CronManager
 
 class HabitTrackerGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.habit_tracker = HabitTracker()
         self.wallpaper_generator = WallpaperGenerator(self.habit_tracker)
+        self.cron_manager = CronManager()
         
         # Initialize checkbox_layout
         self.checkbox_layout = None
@@ -70,6 +72,28 @@ class HabitTrackerGUI(QMainWindow):
         button_layout.addWidget(delete_button)
         
         layout.addLayout(button_layout)
+        
+        # Add cron job management buttons
+        cron_layout = QHBoxLayout()
+        
+        self.cron_status_label = QLabel()
+        self.update_cron_status()
+        
+        frequency_combo = QComboBox()
+        frequency_combo.addItems(['1 minute', '1 hour', '12 hours', '24 hours'])
+        
+        set_cron_button = QPushButton('Set Auto-Update')
+        set_cron_button.clicked.connect(lambda: self.set_cron_frequency(frequency_combo.currentText()))
+        
+        remove_cron_button = QPushButton('Remove Auto-Update')
+        remove_cron_button.clicked.connect(self.remove_cron_job)
+        
+        cron_layout.addWidget(self.cron_status_label)
+        cron_layout.addWidget(frequency_combo)
+        cron_layout.addWidget(set_cron_button)
+        cron_layout.addWidget(remove_cron_button)
+        
+        layout.addLayout(cron_layout)
         
         # Create table for habits
         self.table = QTableWidget()
@@ -486,6 +510,51 @@ class HabitTrackerGUI(QMainWindow):
                 QMessageBox.information(self, 'Success', 'Wallpaper updated successfully!')
         except Exception as e:
             QMessageBox.critical(self, 'Error', f'Error updating wallpaper: {str(e)}')
+
+    def update_cron_status(self):
+        if self.cron_manager.is_job_active():
+            freq = self.cron_manager.get_current_frequency()
+            if freq == 1:
+                text = "Auto-update: Every minute"
+            elif freq == 60:
+                text = "Auto-update: Every hour"
+            elif freq == 720:
+                text = "Auto-update: Every 12 hours"
+            else:
+                text = "Auto-update: Daily"
+            self.cron_status_label.setText(text)
+            self.cron_status_label.setStyleSheet("color: green;")
+        else:
+            self.cron_status_label.setText("Auto-update: Off")
+            self.cron_status_label.setStyleSheet("color: red;")
+    
+    def set_cron_frequency(self, frequency_text):
+        frequency_map = {
+            '1 minute': 1,
+            '1 hour': 60,
+            '12 hours': 720,
+            '24 hours': 1440
+        }
+        minutes = frequency_map[frequency_text]
+        
+        try:
+            self.cron_manager.set_update_frequency(minutes)
+            self.update_cron_status()
+            QMessageBox.information(self, 'Success', 
+                                  f'Wallpaper auto-update set to: {frequency_text}')
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', 
+                               f'Failed to set auto-update: {str(e)}')
+    
+    def remove_cron_job(self):
+        try:
+            self.cron_manager.remove_job()
+            self.update_cron_status()
+            QMessageBox.information(self, 'Success', 
+                                  'Wallpaper auto-update disabled')
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', 
+                               f'Failed to disable auto-update: {str(e)}')
 
 def main():
     app = QApplication(sys.argv)
