@@ -34,5 +34,15 @@ def init_db():
         )
     ''')
     
+    # Clean up any duplicate entries
+    c.execute("""
+        DELETE FROM habit_logs 
+        WHERE rowid NOT IN (
+            SELECT MIN(rowid)
+            FROM habit_logs
+            GROUP BY habit_id, date
+        )
+    """)
+    
     conn.commit()
     conn.close() 

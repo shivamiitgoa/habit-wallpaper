@@ -144,17 +144,30 @@ class HabitTrackerGUI(QMainWindow):
         
         tab.setLayout(layout)
         self.refresh_habit_checkboxes()
+        self.refresh_progress_view()
         return tab
     
     def select_all_habits(self):
+        # Temporarily disconnect all checkbox signals
         for i in range(self.checkbox_layout.count()):
             checkbox = self.checkbox_layout.itemAt(i).widget()
+            checkbox.stateChanged.disconnect()
             checkbox.setChecked(True)
+            checkbox.stateChanged.connect(self.refresh_progress_view)
+        
+        # Refresh progress view once after all changes
+        self.refresh_progress_view()
 
     def deselect_all_habits(self):
+        # Temporarily disconnect all checkbox signals
         for i in range(self.checkbox_layout.count()):
             checkbox = self.checkbox_layout.itemAt(i).widget()
+            checkbox.stateChanged.disconnect()
             checkbox.setChecked(False)
+            checkbox.stateChanged.connect(self.refresh_progress_view)
+        
+        # Refresh progress view once after all changes
+        self.refresh_progress_view()
 
     def refresh_habit_checkboxes(self):
         # Clear existing checkboxes
@@ -171,34 +184,57 @@ class HabitTrackerGUI(QMainWindow):
             checkbox.stateChanged.connect(self.refresh_progress_view)
             checkbox.setChecked(True)  # Set checked by default
             self.checkbox_layout.addWidget(checkbox)
-    
+        
+        # Force a refresh of the progress view after all checkboxes are created
+        if habits:  # Only refresh if there are habits
+            self.refresh_progress_view()
+
     def create_habit_plot(self, habit_id, habit_name, habit_type, target_value):
         # Create figure
         fig = Figure(figsize=(8, 3))
         ax = fig.add_subplot(111)
         
+        # Get habit's default value
+        self.habit_tracker.cursor.execute("""
+            SELECT default_value FROM habits WHERE id = ?
+        """, (habit_id,))
+        default_value = self.habit_tracker.cursor.fetchone()[0]
+        
         # Get all logs for this habit
         self.habit_tracker.cursor.execute("""
-            SELECT date, value FROM habit_logs 
+            SELECT DISTINCT date, value 
+            FROM habit_logs 
             WHERE habit_id = ?
+            GROUP BY date
             ORDER BY date
         """, (habit_id,))
-        logs = self.habit_tracker.cursor.fetchall()
+        logs = dict(self.habit_tracker.cursor.fetchall())
         
         if not logs:
-            return None
+            # If no logs exist, start from today
+            start_date = date.today()
+        else:
+            # Start from the earliest log
+            start_date = datetime.strptime(min(logs.keys()), '%Y-%m-%d').date()
         
-        dates = [datetime.strptime(log[0], '%Y-%m-%d').date() for log in logs]
-        values = [log[1] for log in logs]
+        end_date = date.today()
+        dates = []
+        values = []
+        
+        # Generate data points for each day from start to today
+        current = start_date
+        while current <= end_date:
+            dates.append(current)
+            current_str = current.strftime('%Y-%m-%d')
+            values.append(logs.get(current_str, default_value))  # Use default value if no log exists
+            current += timedelta(days=1)
         
         # Plot data
         if habit_type == 'boolean':
-            # For boolean habits, use step plot
             ax.step(dates, values, where='mid', label='Actual', color='blue')
             if target_value:
                 ax.axhline(y=target_value, color='green', linestyle='--', label='Target')
         else:
-            # For numeric habits, use line plot
             ax.plot(dates, values, label='Actual', color='blue')
             if target_value:
                 ax.axhline(y=target_value, color='green', linestyle='--', label='Target')
@@ -210,13 +246,129 @@ class HabitTrackerGUI(QMainWindow):
         ax.grid(True)
         ax.legend()
         
-        # Format x-axis
+        # Format x-axis with no duplicate dates
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-        fig.autofmt_xdate()  # Rotate and align the tick labels
+        ax.xaxis.set_major_locator(mdates.DayLocator())
+        fig.autofmt_xdate()
         
         # Create canvas
         canvas = FigureCanvas(fig)
         return canvas
+
+    def create_combined_plot(self, selected_habits):
+        # Create figure with more width to accommodate legend
+        fig = Figure(figsize=(12, 6))
+        ax = fig.add_subplot(111)
+        
+        # Colors for different habits with better contrast
+        colors = ['#1f77b4', '#d62728', '#2ca02c', '#9467bd', '#ff7f0e', '#8c564b', '#e377c2']
+        
+        # Reduced offset for more subtle separation
+        offset = 0.02  # Changed from 0.1 to 0.02
+        
+        # Find the earliest start date among all habits
+        start_date = date.today()
+        end_date = date.today()
+        
+        for habit_id in selected_habits:
+            # Get first log date for this habit
+            self.habit_tracker.cursor.execute("""
+                SELECT MIN(date) FROM habit_logs WHERE habit_id = ?
+            """, (habit_id,))
+            first_date = self.habit_tracker.cursor.fetchone()[0]
+            if first_date:
+                start_date = min(start_date, datetime.strptime(first_date, '%Y-%m-%d').date())
+        
+        # Plot each habit with improvements
+        for i, habit_id in enumerate(selected_habits):
+            color = colors[i % len(colors)]
+            
+            # Get habit info
+            self.habit_tracker.cursor.execute("""
+                SELECT name, type, target_value, default_value 
+                FROM habits WHERE id = ?
+            """, (habit_id,))
+            habit_name, habit_type, target_value, default_value = self.habit_tracker.cursor.fetchone()
+            
+            # Get all logs for this habit
+            self.habit_tracker.cursor.execute("""
+                SELECT DISTINCT date, value 
+                FROM habit_logs 
+                WHERE habit_id = ?
+                GROUP BY date
+                ORDER BY date
+            """, (habit_id,))
+            logs = dict(self.habit_tracker.cursor.fetchall())
+            
+            dates = []
+            values = []
+            current = start_date
+            while current <= end_date:
+                dates.append(current)
+                current_str = current.strftime('%Y-%m-%d')
+                # Add offset to separate overlapping lines
+                value = logs.get(current_str, default_value)
+                if habit_type == 'boolean':
+                    values.append(value + (i * offset))  # Offset each line
+                else:
+                    values.append(value)
+                current += timedelta(days=1)
+            
+            # Plot data with improved visibility
+            if habit_type == 'boolean':
+                line = ax.step(dates, values, where='mid', 
+                             label=f'{habit_name} (Actual)',
+                             color=color, 
+                             alpha=0.7,
+                             linewidth=2,  # Method 2: Thicker lines
+                             marker='o',    # Method 3: Add markers
+                             markersize=4,
+                             markerfacecolor='white')  # Method 4: White-filled markers
+                if target_value:
+                    ax.axhline(y=target_value + (i * offset), 
+                              color=color, 
+                              linestyle='--', 
+                              label=f'{habit_name} (Target)',
+                              alpha=0.5)
+            else:
+                line = ax.plot(dates, values, 
+                             label=f'{habit_name} (Actual)',
+                             color=color, 
+                             alpha=0.7,
+                             linewidth=2,
+                             marker='o',
+                             markersize=4,
+                             markerfacecolor='white')
+                if target_value:
+                    ax.axhline(y=target_value, 
+                              color=color, 
+                              linestyle='--', 
+                              label=f'{habit_name} (Target)',
+                              alpha=0.5)
+        
+        # Customize plot
+        ax.set_title('Habit Progress')
+        ax.set_xlabel('Date')
+        ax.set_ylabel('Value')
+        ax.grid(True, alpha=0.2)  # Lighter grid
+        
+        # Method 5: Move legend outside the plot
+        ax.legend(bbox_to_anchor=(1.05, 1), 
+                 loc='upper left',
+                 borderaxespad=0,
+                 frameon=True,  # Add frame
+                 fancybox=True,  # Rounded corners
+                 shadow=True)    # Add shadow
+        
+        # Format x-axis
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
+        fig.autofmt_xdate()
+        
+        # Method 6: Add padding to prevent cutoff
+        fig.tight_layout(rect=[0, 0, 0.85, 1])  # Leave space for legend
+        
+        return FigureCanvas(fig)
 
     def refresh_progress_view(self):
         # Clear existing progress views
@@ -240,28 +392,10 @@ class HabitTrackerGUI(QMainWindow):
             self.progress_layout.addWidget(no_selection_label)
             return
         
-        for habit_id in selected_habits:
-            # Get habit info
-            self.habit_tracker.cursor.execute(
-                "SELECT name, type, target_value FROM habits WHERE id = ?",
-                (habit_id,)
-            )
-            habit_name, habit_type, target_value = self.habit_tracker.cursor.fetchone()
-            
-            # Create frame for habit
-            habit_frame = QFrame()
-            habit_frame.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
-            habit_layout = QVBoxLayout()
-            
-            # Add plot
-            plot = self.create_habit_plot(habit_id, habit_name, habit_type, target_value)
-            if plot:
-                habit_layout.addWidget(plot)
-            else:
-                habit_layout.addWidget(QLabel("No data recorded yet"))
-            
-            habit_frame.setLayout(habit_layout)
-            self.progress_layout.addWidget(habit_frame)
+        # Create and add combined plot
+        plot = self.create_combined_plot(selected_habits)
+        if plot:
+            self.progress_layout.addWidget(plot)
         
         self.progress_layout.addStretch()
 
@@ -351,6 +485,10 @@ class HabitTrackerGUI(QMainWindow):
                 """, (habit_id, value, date_str))
             
             self.habit_tracker.conn.commit()
+            
+            # Refresh the progress view to show the updated value
+            self.refresh_progress_view()
+            
         except sqlite3.Error as e:
             QMessageBox.critical(self, 'Error', f'Error saving habit log: {str(e)}')
 
