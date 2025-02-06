@@ -51,7 +51,7 @@ class WallpaperGenerator:
         # Adjust layout to ensure content stays in safe area (middle 60%)
         fig.tight_layout(rect=[0.02,                    # Left padding
                               self.padding_percent,      # Bottom padding (20%)
-                              0.85,                      # Right padding for legend
+                              0.92,                      # Right padding for legend (reduced)
                               1 - self.padding_percent]) # Top padding (20%)
         
         # Clean up old wallpapers

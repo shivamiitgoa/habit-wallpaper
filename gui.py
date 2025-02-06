@@ -28,11 +28,6 @@ class HabitTrackerGUI(QMainWindow):
         
         self.init_ui()
         
-        # Set up timer for wallpaper updates
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_wallpaper)
-        self.timer.start(300000)  # Check every 5 minutes (300000 milliseconds)
-        
     def init_ui(self):
         self.setWindowTitle('Habit Tracker')
         self.setGeometry(100, 100, 1000, 800)
@@ -78,11 +73,11 @@ class HabitTrackerGUI(QMainWindow):
         
         # Create table for habits
         self.table = QTableWidget()
-        # Name, Type, Target, and 7 days
-        self.table.setColumnCount(10)
+        # Name, Type, Target, Default Value, and 7 days
+        self.table.setColumnCount(11)  # Increased by 1 for Default Value
         
         # Set headers
-        headers = ['Name', 'Type', 'Target']
+        headers = ['Name', 'Type', 'Target', 'Default']  # Added Default
         today = date.today()
         for i in range(7):
             day = today - timedelta(days=6-i)
@@ -259,15 +254,16 @@ class HabitTrackerGUI(QMainWindow):
     def create_combined_plot(self, selected_habits):
         fig, ax = create_habit_progress_plot(self.habit_tracker, selected_habits)
         
-        # Add GUI-specific adjustments
-        ax.legend(bbox_to_anchor=(1.05, 1),
+        # Add GUI-specific adjustments with reduced right margin
+        ax.legend(bbox_to_anchor=(1.02, 1),
                  loc='upper left',
                  borderaxespad=0,
                  frameon=True,
                  fancybox=True,
                  shadow=True)
         
-        fig.tight_layout(rect=[0, 0, 0.85, 1])
+        # Reduce right margin from 0.85 to 0.92
+        fig.tight_layout(rect=[0, 0, 0.92, 1])
         
         return FigureCanvas(fig)
 
@@ -328,9 +324,16 @@ class HabitTrackerGUI(QMainWindow):
                 target_display = str(target) if target else ''
             self.table.setItem(row, 2, QTableWidgetItem(target_display))
             
+            # Set Default Value - Show 'Yes'/'No' for boolean habits
+            if habit_type == 'boolean':
+                default_display = 'Yes' if default_value == 1 else 'No'
+            else:
+                default_display = str(default_value)
+            self.table.setItem(row, 3, QTableWidgetItem(default_display))
+            
             # Get last 7 days of logs
             for i in range(7):
-                col = i + 3  # offset for Name, Type, and Target columns
+                col = i + 4  # offset for Name, Type, Target, and Default columns
                 current_date = today - timedelta(days=6-i)
                 
                 self.habit_tracker.cursor.execute("""
@@ -344,7 +347,7 @@ class HabitTrackerGUI(QMainWindow):
                 if habit_type == 'boolean':
                     # Create combobox for boolean habits
                     combo = QComboBox()
-                    combo.addItems(['Yes', 'No'])  # Remove empty option
+                    combo.addItems(['Yes', 'No'])
                     combo.setProperty('habit_id', habit_id)
                     combo.setProperty('date', current_date.strftime('%Y-%m-%d'))
                     
@@ -387,11 +390,8 @@ class HabitTrackerGUI(QMainWindow):
             
             self.habit_tracker.conn.commit()
             
-            # Refresh the progress view to show the updated value
+            # Only refresh the progress view
             self.refresh_progress_view()
-            
-            # Update wallpaper automatically when habits are modified
-            self.update_wallpaper()
             
         except sqlite3.Error as e:
             QMessageBox.critical(self, 'Error', f'Error saving habit log: {str(e)}')
@@ -449,9 +449,6 @@ class HabitTrackerGUI(QMainWindow):
                 self.refresh_table()
                 QMessageBox.information(self, 'Success', f'Added habit: {name}')
                 
-                # Update wallpaper when new habit is added
-                self.update_wallpaper()
-                
             except Exception as e:
                 QMessageBox.critical(self, 'Error', f'Error adding habit: {str(e)}')
     
@@ -477,9 +474,6 @@ class HabitTrackerGUI(QMainWindow):
                 self.habit_tracker.conn.commit()
                 self.refresh_table()
                 QMessageBox.information(self, 'Success', f'Deleted habit: {habit_name}')
-                
-                # Update wallpaper when habit is deleted
-                self.update_wallpaper()
                 
             except Exception as e:
                 QMessageBox.critical(self, 'Error', f'Error deleting habit: {str(e)}')
