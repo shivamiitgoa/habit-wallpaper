@@ -1,9 +1,10 @@
 import sqlite3
 from datetime import datetime, date
+from config import DB_NAME
 
 class HabitTracker:
     def __init__(self):
-        self.conn = sqlite3.connect('habits.db')
+        self.conn = sqlite3.connect(DB_NAME)
         self.cursor = self.conn.cursor()
 
     def add_habit(self):

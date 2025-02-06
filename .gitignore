@@ -34,3 +34,12 @@ habits.db
 wallpapers/
 
 .DS_Store
+
+# Environment files
+.env
+*.db
+
+# But include example env files
+!.env.example
+!.env.prod
+!.env.test

@@ -1,12 +1,14 @@
 import sqlite3
+from config import DB_NAME, RESET_TABLES
 
 def init_db():
-    conn = sqlite3.connect('habits.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     
-    # Drop existing tables to update schema
-    c.execute("DROP TABLE IF EXISTS habit_logs")
-    c.execute("DROP TABLE IF EXISTS habits")
+    if RESET_TABLES:
+        # Drop existing tables only in test environment
+        c.execute("DROP TABLE IF EXISTS habit_logs")
+        c.execute("DROP TABLE IF EXISTS habits")
     
     # Create habits table with default_value
     c.execute('''

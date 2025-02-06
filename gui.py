@@ -10,6 +10,10 @@ import sys
 from habit_tracker import HabitTracker
 from wallpaper_generator import WallpaperGenerator
 import sqlite3
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import matplotlib.dates as mdates
+from matplotlib.figure import Figure
 
 class HabitTrackerGUI(QMainWindow):
     def __init__(self):
@@ -103,30 +107,34 @@ class HabitTrackerGUI(QMainWindow):
         
         # Create habit selection area
         selection_widget = QWidget()
-        selection_layout = QVBoxLayout()
-        selection_layout.addWidget(QLabel("Select habits to view:"))
+        selection_layout = QHBoxLayout()  # Changed to horizontal layout
         
-        # Create scrollable area for habit checkboxes
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll_widget = QWidget()
-        self.checkbox_layout = QVBoxLayout()
-        scroll_widget.setLayout(self.checkbox_layout)
-        scroll.setWidget(scroll_widget)
+        # Add "Select All" and "Deselect All" buttons
+        select_all_btn = QPushButton("Select All")
+        deselect_all_btn = QPushButton("Deselect All")
+        select_all_btn.clicked.connect(self.select_all_habits)
+        deselect_all_btn.clicked.connect(self.deselect_all_habits)
         
-        selection_layout.addWidget(scroll)
+        selection_layout.addWidget(select_all_btn)
+        selection_layout.addWidget(deselect_all_btn)
         selection_widget.setLayout(selection_layout)
         layout.addWidget(selection_widget)
+        
+        # Create scrollable area for habit checkboxes
+        checkbox_widget = QWidget()
+        self.checkbox_layout = QHBoxLayout()  # Changed to horizontal layout
+        checkbox_widget.setLayout(self.checkbox_layout)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(checkbox_widget)
+        scroll.setMaximumHeight(100)  # Limit height of checkbox area
+        layout.addWidget(scroll)
         
         # Create progress view area
         self.progress_view = QWidget()
         self.progress_layout = QVBoxLayout()
         self.progress_view.setLayout(self.progress_layout)
-        
-        # Add refresh button
-        refresh_button = QPushButton("Refresh Progress View")
-        refresh_button.clicked.connect(self.refresh_progress_view)
-        layout.addWidget(refresh_button)
         
         # Add progress view to a scroll area
         progress_scroll = QScrollArea()
@@ -138,6 +146,16 @@ class HabitTrackerGUI(QMainWindow):
         self.refresh_habit_checkboxes()
         return tab
     
+    def select_all_habits(self):
+        for i in range(self.checkbox_layout.count()):
+            checkbox = self.checkbox_layout.itemAt(i).widget()
+            checkbox.setChecked(True)
+
+    def deselect_all_habits(self):
+        for i in range(self.checkbox_layout.count()):
+            checkbox = self.checkbox_layout.itemAt(i).widget()
+            checkbox.setChecked(False)
+
     def refresh_habit_checkboxes(self):
         # Clear existing checkboxes
         for i in reversed(range(self.checkbox_layout.count())):
@@ -151,13 +169,60 @@ class HabitTrackerGUI(QMainWindow):
             checkbox = QCheckBox(name)
             checkbox.setObjectName(str(habit_id))
             checkbox.stateChanged.connect(self.refresh_progress_view)
+            checkbox.setChecked(True)  # Set checked by default
             self.checkbox_layout.addWidget(checkbox)
     
+    def create_habit_plot(self, habit_id, habit_name, habit_type, target_value):
+        # Create figure
+        fig = Figure(figsize=(8, 3))
+        ax = fig.add_subplot(111)
+        
+        # Get all logs for this habit
+        self.habit_tracker.cursor.execute("""
+            SELECT date, value FROM habit_logs 
+            WHERE habit_id = ?
+            ORDER BY date
+        """, (habit_id,))
+        logs = self.habit_tracker.cursor.fetchall()
+        
+        if not logs:
+            return None
+        
+        dates = [datetime.strptime(log[0], '%Y-%m-%d').date() for log in logs]
+        values = [log[1] for log in logs]
+        
+        # Plot data
+        if habit_type == 'boolean':
+            # For boolean habits, use step plot
+            ax.step(dates, values, where='mid', label='Actual', color='blue')
+            if target_value:
+                ax.axhline(y=target_value, color='green', linestyle='--', label='Target')
+        else:
+            # For numeric habits, use line plot
+            ax.plot(dates, values, label='Actual', color='blue')
+            if target_value:
+                ax.axhline(y=target_value, color='green', linestyle='--', label='Target')
+        
+        # Customize plot
+        ax.set_title(habit_name)
+        ax.set_xlabel('Date')
+        ax.set_ylabel('Value')
+        ax.grid(True)
+        ax.legend()
+        
+        # Format x-axis
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        fig.autofmt_xdate()  # Rotate and align the tick labels
+        
+        # Create canvas
+        canvas = FigureCanvas(fig)
+        return canvas
+
     def refresh_progress_view(self):
         # Clear existing progress views
         for i in reversed(range(self.progress_layout.count())):
             item = self.progress_layout.itemAt(i)
-            if item and item.widget():  # Check if item exists and has a widget
+            if item and item.widget():
                 item.widget().setParent(None)
             else:
                 self.progress_layout.removeItem(item)
@@ -175,10 +240,6 @@ class HabitTrackerGUI(QMainWindow):
             self.progress_layout.addWidget(no_selection_label)
             return
         
-        # Get last 30 days of data for selected habits
-        end_date = date.today()
-        start_date = end_date - timedelta(days=29)
-        
         for habit_id in selected_habits:
             # Get habit info
             self.habit_tracker.cursor.execute(
@@ -192,35 +253,12 @@ class HabitTrackerGUI(QMainWindow):
             habit_frame.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
             habit_layout = QVBoxLayout()
             
-            habit_layout.addWidget(QLabel(f"<b>{habit_name}</b>"))
-            
-            # Get habit logs - Modified query to handle duplicates
-            self.habit_tracker.cursor.execute("""
-                SELECT DISTINCT date, value 
-                FROM habit_logs 
-                WHERE habit_id = ? AND date BETWEEN ? AND ?
-                GROUP BY date  -- This ensures one entry per date
-                ORDER BY date DESC  -- Show most recent first
-            """, (habit_id, start_date, end_date))
-            logs = self.habit_tracker.cursor.fetchall()
-            
-            # Create progress visualization
-            progress_text = ""
-            for log_date, value in logs:
-                if habit_type == 'boolean':
-                    value_display = "✓" if value == 1 else "✗"
-                else:
-                    value_display = f"{value:.1f}"
-                    if target_value:
-                        value_display += f" / {target_value}"
-                progress_text += f"{log_date}: {value_display}\n"
-            
-            if not logs:
-                progress_text = "No data recorded yet"
-            
-            progress_label = QLabel(progress_text)
-            progress_label.setStyleSheet("font-family: monospace;")
-            habit_layout.addWidget(progress_label)
+            # Add plot
+            plot = self.create_habit_plot(habit_id, habit_name, habit_type, target_value)
+            if plot:
+                habit_layout.addWidget(plot)
+            else:
+                habit_layout.addWidget(QLabel("No data recorded yet"))
             
             habit_frame.setLayout(habit_layout)
             self.progress_layout.addWidget(habit_frame)
