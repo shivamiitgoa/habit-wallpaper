@@ -1,18 +1,26 @@
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QPushButton, QLabel, QComboBox, 
                             QLineEdit, QTableWidget, QTableWidgetItem, 
-                            QMessageBox, QInputDialog)
+                            QMessageBox, QInputDialog, QTabWidget, QCheckBox,
+                            QScrollArea, QFrame)
 from PyQt6.QtCore import Qt, QTimer
-from datetime import datetime, date
+from PyQt6.QtGui import QPainter, QColor
+from datetime import datetime, date, timedelta
 import sys
 from habit_tracker import HabitTracker
 from wallpaper_generator import WallpaperGenerator
+import sqlite3
 
 class HabitTrackerGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.habit_tracker = HabitTracker()
         self.wallpaper_generator = WallpaperGenerator()
+        
+        # Initialize checkbox_layout
+        self.checkbox_layout = None
+        self.progress_layout = None
+        
         self.init_ui()
         
         # Set up timer for daily wallpaper update
@@ -22,12 +30,28 @@ class HabitTrackerGUI(QMainWindow):
         
     def init_ui(self):
         self.setWindowTitle('Habit Tracker')
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 1000, 800)
         
         # Create central widget and main layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
+        
+        # Create tab widget
+        tab_widget = QTabWidget()
+        
+        # Create and add tabs
+        habits_tab = self.create_habits_tab()
+        progress_tab = self.create_progress_tab()
+        
+        tab_widget.addTab(habits_tab, "Habits")
+        tab_widget.addTab(progress_tab, "Progress View")
+        
+        layout.addWidget(tab_widget)
+    
+    def create_habits_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout()
         
         # Create buttons
         button_layout = QHBoxLayout()
@@ -35,17 +59,13 @@ class HabitTrackerGUI(QMainWindow):
         add_button = QPushButton('Add Habit')
         add_button.clicked.connect(self.add_habit)
         
-        log_button = QPushButton('Log Habit')
-        log_button.clicked.connect(self.log_habit)
-        
         update_button = QPushButton('Update Wallpaper')
         update_button.clicked.connect(self.update_wallpaper)
         
-        delete_button = QPushButton('Delete Habit')
+        delete_button = QPushButton('Delete Selected Habit')
         delete_button.clicked.connect(self.delete_habit)
         
         button_layout.addWidget(add_button)
-        button_layout.addWidget(log_button)
         button_layout.addWidget(update_button)
         button_layout.addWidget(delete_button)
         
@@ -53,118 +73,303 @@ class HabitTrackerGUI(QMainWindow):
         
         # Create table for habits
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(['Name', 'Type', 'Today\'s Value', 'Target'])
+        # Name, Type, Target, and 7 days
+        self.table.setColumnCount(10)
+        
+        # Set headers
+        headers = ['Name', 'Type', 'Target']
+        today = date.today()
+        for i in range(7):
+            day = today - timedelta(days=6-i)
+            headers.append(day.strftime('%Y-%m-%d'))
+        
+        self.table.setHorizontalHeaderLabels(headers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         layout.addWidget(self.table)
         
-        self.refresh_table()
+        # Add label for instructions
+        instructions = QLabel("Select a habit from the table to delete it. Use dropdowns to log boolean habits.")
+        instructions.setStyleSheet("color: gray;")
+        layout.addWidget(instructions)
         
+        tab.setLayout(layout)
+        self.refresh_table()
+        return tab
+    
+    def create_progress_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout()
+        
+        # Create habit selection area
+        selection_widget = QWidget()
+        selection_layout = QVBoxLayout()
+        selection_layout.addWidget(QLabel("Select habits to view:"))
+        
+        # Create scrollable area for habit checkboxes
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_widget = QWidget()
+        self.checkbox_layout = QVBoxLayout()
+        scroll_widget.setLayout(self.checkbox_layout)
+        scroll.setWidget(scroll_widget)
+        
+        selection_layout.addWidget(scroll)
+        selection_widget.setLayout(selection_layout)
+        layout.addWidget(selection_widget)
+        
+        # Create progress view area
+        self.progress_view = QWidget()
+        self.progress_layout = QVBoxLayout()
+        self.progress_view.setLayout(self.progress_layout)
+        
+        # Add refresh button
+        refresh_button = QPushButton("Refresh Progress View")
+        refresh_button.clicked.connect(self.refresh_progress_view)
+        layout.addWidget(refresh_button)
+        
+        # Add progress view to a scroll area
+        progress_scroll = QScrollArea()
+        progress_scroll.setWidgetResizable(True)
+        progress_scroll.setWidget(self.progress_view)
+        layout.addWidget(progress_scroll)
+        
+        tab.setLayout(layout)
+        self.refresh_habit_checkboxes()
+        return tab
+    
+    def refresh_habit_checkboxes(self):
+        # Clear existing checkboxes
+        for i in reversed(range(self.checkbox_layout.count())):
+            self.checkbox_layout.itemAt(i).widget().setParent(None)
+        
+        # Add checkboxes for each habit
+        self.habit_tracker.cursor.execute("SELECT id, name FROM habits ORDER BY name")
+        habits = self.habit_tracker.cursor.fetchall()
+        
+        for habit_id, name in habits:
+            checkbox = QCheckBox(name)
+            checkbox.setObjectName(str(habit_id))
+            checkbox.stateChanged.connect(self.refresh_progress_view)
+            self.checkbox_layout.addWidget(checkbox)
+    
+    def refresh_progress_view(self):
+        # Clear existing progress views
+        for i in reversed(range(self.progress_layout.count())):
+            item = self.progress_layout.itemAt(i)
+            if item and item.widget():  # Check if item exists and has a widget
+                item.widget().setParent(None)
+            else:
+                self.progress_layout.removeItem(item)
+        
+        # Get selected habits
+        selected_habits = []
+        for i in range(self.checkbox_layout.count()):
+            checkbox = self.checkbox_layout.itemAt(i).widget()
+            if checkbox.isChecked():
+                selected_habits.append(int(checkbox.objectName()))
+        
+        if not selected_habits:
+            no_selection_label = QLabel("No habits selected")
+            no_selection_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.progress_layout.addWidget(no_selection_label)
+            return
+        
+        # Get last 30 days of data for selected habits
+        end_date = date.today()
+        start_date = end_date - timedelta(days=29)
+        
+        for habit_id in selected_habits:
+            # Get habit info
+            self.habit_tracker.cursor.execute(
+                "SELECT name, type, target_value FROM habits WHERE id = ?",
+                (habit_id,)
+            )
+            habit_name, habit_type, target_value = self.habit_tracker.cursor.fetchone()
+            
+            # Create frame for habit
+            habit_frame = QFrame()
+            habit_frame.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
+            habit_layout = QVBoxLayout()
+            
+            habit_layout.addWidget(QLabel(f"<b>{habit_name}</b>"))
+            
+            # Get habit logs - Modified query to handle duplicates
+            self.habit_tracker.cursor.execute("""
+                SELECT DISTINCT date, value 
+                FROM habit_logs 
+                WHERE habit_id = ? AND date BETWEEN ? AND ?
+                GROUP BY date  -- This ensures one entry per date
+                ORDER BY date DESC  -- Show most recent first
+            """, (habit_id, start_date, end_date))
+            logs = self.habit_tracker.cursor.fetchall()
+            
+            # Create progress visualization
+            progress_text = ""
+            for log_date, value in logs:
+                if habit_type == 'boolean':
+                    value_display = "✓" if value == 1 else "✗"
+                else:
+                    value_display = f"{value:.1f}"
+                    if target_value:
+                        value_display += f" / {target_value}"
+                progress_text += f"{log_date}: {value_display}\n"
+            
+            if not logs:
+                progress_text = "No data recorded yet"
+            
+            progress_label = QLabel(progress_text)
+            progress_label.setStyleSheet("font-family: monospace;")
+            habit_layout.addWidget(progress_label)
+            
+            habit_frame.setLayout(habit_layout)
+            self.progress_layout.addWidget(habit_frame)
+        
+        self.progress_layout.addStretch()
+
     def refresh_table(self):
         self.table.setRowCount(0)
         today = date.today()
         
         # Get all habits
         self.habit_tracker.cursor.execute("""
-            SELECT h.id, h.name, h.type, h.target_value, hl.value
-            FROM habits h
-            LEFT JOIN habit_logs hl ON h.id = hl.habit_id 
-            AND hl.date = ?
-            ORDER BY h.name
-        """, (today,))
+            SELECT id, name, type, target_value, default_value
+            FROM habits
+            ORDER BY name
+        """)
         
         habits = self.habit_tracker.cursor.fetchall()
         
         self.table.setRowCount(len(habits))
-        for row, (id, name, type, target, value) in enumerate(habits):
+        for row, (habit_id, name, habit_type, target, default_value) in enumerate(habits):
+            # Set Name
             self.table.setItem(row, 0, QTableWidgetItem(name))
-            self.table.setItem(row, 1, QTableWidgetItem(type))
             
-            value_display = ''
-            if value is not None:
-                if type == 'boolean':
-                    value_display = 'Yes' if value == 1 else 'No'
+            # Set Type
+            self.table.setItem(row, 1, QTableWidgetItem(habit_type))
+            
+            # Set Target - Modified to show 'Yes' for boolean habits
+            if habit_type == 'boolean':
+                target_display = 'Yes'  # Boolean habits always target 'Yes'
+            else:
+                target_display = str(target) if target else ''
+            self.table.setItem(row, 2, QTableWidgetItem(target_display))
+            
+            # Get last 7 days of logs
+            for i in range(7):
+                col = i + 3  # offset for Name, Type, and Target columns
+                current_date = today - timedelta(days=6-i)
+                
+                self.habit_tracker.cursor.execute("""
+                    SELECT value FROM habit_logs 
+                    WHERE habit_id = ? AND date = ?
+                """, (habit_id, current_date))
+                
+                log = self.habit_tracker.cursor.fetchone()
+                value = log[0] if log else default_value  # Use default value if no log exists
+                
+                if habit_type == 'boolean':
+                    # Create combobox for boolean habits
+                    combo = QComboBox()
+                    combo.addItems(['Yes', 'No'])  # Remove empty option
+                    combo.setProperty('habit_id', habit_id)
+                    combo.setProperty('date', current_date.strftime('%Y-%m-%d'))
+                    
+                    combo.setCurrentText('Yes' if value == 1 else 'No')
+                    
+                    combo.currentTextChanged.connect(self.on_boolean_value_changed)
+                    self.table.setCellWidget(row, col, combo)
                 else:
-                    value_display = str(value)
-            self.table.setItem(row, 2, QTableWidgetItem(value_display))
-            
-            target_display = str(target) if target else ''
-            self.table.setItem(row, 3, QTableWidgetItem(target_display))
+                    # For numeric habits, just show the value
+                    value_display = str(value) if value is not None else ''
+                    self.table.setItem(row, col, QTableWidgetItem(value_display))
         
         self.table.resizeColumnsToContents()
         
+        # Only refresh checkboxes if they exist
+        if self.checkbox_layout is not None:
+            self.refresh_habit_checkboxes()
+
+    def on_boolean_value_changed(self, text):
+        combo = self.sender()
+        habit_id = combo.property('habit_id')
+        date_str = combo.property('date')
+        
+        value = 1 if text == 'Yes' else 0
+        
+        try:
+            # First try to update existing record
+            self.habit_tracker.cursor.execute("""
+                UPDATE habit_logs 
+                SET value = ? 
+                WHERE habit_id = ? AND date = ?
+            """, (value, habit_id, date_str))
+            
+            # If no record was updated (cursor.rowcount == 0), insert new record
+            if self.habit_tracker.cursor.rowcount == 0:
+                self.habit_tracker.cursor.execute("""
+                    INSERT INTO habit_logs (habit_id, value, date)
+                    VALUES (?, ?, ?)
+                """, (habit_id, value, date_str))
+            
+            self.habit_tracker.conn.commit()
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, 'Error', f'Error saving habit log: {str(e)}')
+
     def add_habit(self):
         name, ok = QInputDialog.getText(self, 'Add Habit', 'Enter habit name:')
         if ok and name:
             type_dialog = QMessageBox()
             type_dialog.setWindowTitle('Habit Type')
             type_dialog.setText('Choose habit type:')
-            type_dialog.addButton('Yes/No', QMessageBox.ButtonRole.AcceptRole)
-            type_dialog.addButton('Numeric', QMessageBox.ButtonRole.RejectRole)
+            yes_no_button = type_dialog.addButton('Yes/No', QMessageBox.ButtonRole.AcceptRole)
+            numeric_button = type_dialog.addButton('Numeric', QMessageBox.ButtonRole.RejectRole)
             
-            if type_dialog.exec() == 0:  # Yes/No selected
+            type_dialog.exec()
+            clicked_button = type_dialog.clickedButton()
+            
+            if clicked_button == yes_no_button:  # Yes/No selected
                 habit_type = 'boolean'
-                target_value = None
+                target_value = 1  # Yes is always the target for boolean habits
+                
+                # Get default value for boolean
+                default_dialog = QMessageBox()
+                default_dialog.setWindowTitle('Default Value')
+                default_dialog.setText('Choose default value:')
+                yes_button = default_dialog.addButton('Yes', QMessageBox.ButtonRole.YesRole)
+                no_button = default_dialog.addButton('No', QMessageBox.ButtonRole.NoRole)
+                
+                default_dialog.exec()
+                default_value = 1 if default_dialog.clickedButton() == yes_button else 0
+                
             else:  # Numeric selected
                 habit_type = 'numeric'
                 target_value, ok = QInputDialog.getDouble(
                     self, 'Target Value', 
-                    'Enter target value (0 for no target):', 
+                    'Enter target value:', 
                     0, 0, 10000, 2
                 )
                 if not ok:
                     return
                 
+                default_value, ok = QInputDialog.getDouble(
+                    self, 'Default Value', 
+                    'Enter default value:', 
+                    0, 0, 10000, 2
+                )
+                if not ok:
+                    return
+            
             try:
                 self.habit_tracker.cursor.execute(
-                    "INSERT INTO habits (name, type, target_value) VALUES (?, ?, ?)",
-                    (name, habit_type, target_value)
+                    "INSERT INTO habits (name, type, target_value, default_value) VALUES (?, ?, ?, ?)",
+                    (name, habit_type, target_value, default_value)
                 )
                 self.habit_tracker.conn.commit()
                 self.refresh_table()
                 QMessageBox.information(self, 'Success', f'Added habit: {name}')
             except Exception as e:
                 QMessageBox.critical(self, 'Error', f'Error adding habit: {str(e)}')
-    
-    def log_habit(self):
-        row = self.table.currentRow()
-        if row < 0:
-            QMessageBox.warning(self, 'Warning', 'Please select a habit to log')
-            return
-            
-        habit_name = self.table.item(row, 0).text()
-        habit_type = self.table.item(row, 1).text()
-        
-        self.habit_tracker.cursor.execute(
-            "SELECT id FROM habits WHERE name = ?", (habit_name,)
-        )
-        habit_id = self.habit_tracker.cursor.fetchone()[0]
-        
-        if habit_type == 'boolean':
-            reply = QMessageBox.question(
-                self, 'Log Habit', 
-                f'Did you complete {habit_name} today?',
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            value = 1 if reply == QMessageBox.StandardButton.Yes else 0
-        else:
-            value, ok = QInputDialog.getDouble(
-                self, 'Log Habit', 
-                f'Enter value for {habit_name}:', 
-                0, 0, 10000, 2
-            )
-            if not ok:
-                return
-        
-        try:
-            self.habit_tracker.cursor.execute("""
-                INSERT OR REPLACE INTO habit_logs (habit_id, value, date)
-                VALUES (?, ?, ?)
-            """, (habit_id, value, date.today()))
-            self.habit_tracker.conn.commit()
-            self.refresh_table()
-            QMessageBox.information(self, 'Success', 'Habit logged successfully!')
-        except Exception as e:
-            QMessageBox.critical(self, 'Error', f'Error logging habit: {str(e)}')
     
     def delete_habit(self):
         row = self.table.currentRow()
