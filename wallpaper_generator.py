@@ -66,12 +66,12 @@ class WallpaperGenerator:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         wallpaper_path = os.path.join(self.wallpaper_dir, f'wallpaper_{timestamp}.png')
         
-        # Save with white background at exact resolution
-        fig.patch.set_facecolor('white')
+        # Save with dark background
+        fig.patch.set_facecolor('#1E1E1E')
         fig.savefig(wallpaper_path, 
                    dpi=self.dpi,
                    bbox_inches=None,
-                   facecolor=fig.get_facecolor(),
+                   facecolor='#1E1E1E',  # Ensure dark background is saved
                    edgecolor='none',
                    pad_inches=0)
         plt.close(fig)
@@ -80,6 +80,8 @@ class WallpaperGenerator:
         img = Image.open(wallpaper_path)
         if img.size != (self.width, self.height):
             img = img.resize((self.width, self.height), Image.Resampling.LANCZOS)
+            # Convert to RGBA to ensure transparency is handled correctly
+            img = img.convert('RGBA')
             img.save(wallpaper_path)
         
         # Set wallpaper using system command

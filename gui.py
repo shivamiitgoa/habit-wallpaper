@@ -380,9 +380,16 @@ class HabitTrackerGUI(QMainWindow):
                     combo.currentTextChanged.connect(self.on_boolean_value_changed)
                     self.table.setCellWidget(row, col, combo)
                 else:
-                    # For numeric habits, just show the value
-                    value_display = str(value) if value is not None else ''
-                    self.table.setItem(row, col, QTableWidgetItem(value_display))
+                    # For numeric habits, create an editable item
+                    value_item = QTableWidgetItem(str(value) if value is not None else '')
+                    value_item.setData(Qt.ItemDataRole.UserRole, {
+                        'habit_id': habit_id,
+                        'date': current_date.strftime('%Y-%m-%d')
+                    })
+                    self.table.setItem(row, col, value_item)
+        
+        # Connect to item changed signal
+        self.table.itemChanged.connect(self.on_numeric_value_changed)
         
         self.table.resizeColumnsToContents()
         
@@ -419,6 +426,60 @@ class HabitTrackerGUI(QMainWindow):
             
         except sqlite3.Error as e:
             QMessageBox.critical(self, 'Error', f'Error saving habit log: {str(e)}')
+
+    def on_numeric_value_changed(self, item):
+        # Disconnect to prevent recursive signals
+        self.table.itemChanged.disconnect(self.on_numeric_value_changed)
+        
+        try:
+            # Get stored data
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if not data:  # Skip if not a value cell
+                return
+            
+            habit_id = data['habit_id']
+            date_str = data['date']
+            
+            # Get and validate the new value
+            try:
+                new_text = item.text().strip()
+                if new_text == '':
+                    value = None
+                else:
+                    value = float(new_text)
+            except ValueError:
+                QMessageBox.warning(self, 'Invalid Input', 
+                                  'Please enter a valid number')
+                # Reset to previous value
+                self.refresh_table()
+                return
+            
+            # Update database
+            if value is not None:
+                # First try to update existing record
+                self.habit_tracker.cursor.execute("""
+                    UPDATE habit_logs 
+                    SET value = ? 
+                    WHERE habit_id = ? AND date = ?
+                """, (value, habit_id, date_str))
+                
+                # If no record was updated, insert new record
+                if self.habit_tracker.cursor.rowcount == 0:
+                    self.habit_tracker.cursor.execute("""
+                        INSERT INTO habit_logs (habit_id, value, date)
+                        VALUES (?, ?, ?)
+                    """, (habit_id, value, date_str))
+            
+            self.habit_tracker.conn.commit()
+            self.refresh_progress_view()
+            
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', f'Error saving value: {str(e)}')
+            self.refresh_table()
+        
+        finally:
+            # Reconnect the signal
+            self.table.itemChanged.connect(self.on_numeric_value_changed)
 
     def add_habit(self):
         name, ok = QInputDialog.getText(self, 'Add Habit', 'Enter habit name:')

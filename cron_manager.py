@@ -31,14 +31,15 @@ class CronManager:
         # Set environment
         job.env['PYTHONPATH'] = self.project_dir
         
+        # Set schedule using proper cron syntax
         if minutes == 1:
-            job.minute.every(1)
+            job.setall('* * * * *')  # Every minute
         elif minutes == 60:
-            job.hour.every(1)
+            job.setall('0 * * * *')  # Every hour at minute 0
         elif minutes == 720:  # 12 hours
-            job.hour.every(12)
+            job.setall('0 */12 * * *')  # Every 12 hours at minute 0
         elif minutes == 1440:  # 24 hours
-            job.day.every(1)
+            job.setall('0 0 * * *')  # Every day at 00:00
         
         self.cron.write()
     
