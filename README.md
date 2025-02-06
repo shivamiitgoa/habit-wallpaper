@@ -20,6 +20,19 @@ A Python application that tracks daily habits and displays progress by updating 
 2. Install requirements: `pip install -r requirements.txt`
 3. Run the application: `python main.py`
 
+## Environment Setup
+
+```bash
+# Create virtual environment
+python3 -m venv venv
+
+# Activate virtual environment
+source venv/bin/activate
+
+# Install requirements
+pip install -r requirements.txt
+```
+
 ## Usage
 1. Add habits through the command line interface
 2. Track your habits daily

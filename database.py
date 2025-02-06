@@ -4,12 +4,13 @@ def init_db():
     conn = sqlite3.connect('habits.db')
     c = conn.cursor()
     
-    # Create habits table
+    # Create habits table with target value
     c.execute('''
         CREATE TABLE IF NOT EXISTS habits (
             id INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
             type TEXT NOT NULL,
+            target_value REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
