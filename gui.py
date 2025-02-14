@@ -381,7 +381,7 @@ class HabitTrackerGUI(QMainWindow):
                     self.table.setCellWidget(row, col, combo)
                 else:
                     # For numeric habits, create an editable item
-                    value_item = QTableWidgetItem(str(value) if value is not None else '')
+                    value_item = QTableWidgetItem(str(value) if value is not None else str(default_value))
                     value_item.setData(Qt.ItemDataRole.UserRole, {
                         'habit_id': habit_id,
                         'date': current_date.strftime('%Y-%m-%d')

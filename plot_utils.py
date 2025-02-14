@@ -53,7 +53,7 @@ def create_habit_progress_plot(habit_tracker, selected_habits, figsize=(12, 6), 
     for i, habit_id in enumerate(selected_habits):
         color = colors[i % len(colors)]
         
-        # Get habit info
+        # Get habit info including default_value
         habit_tracker.cursor.execute("""
             SELECT name, type, target_value, default_value 
             FROM habits WHERE id = ?
@@ -83,7 +83,9 @@ def create_habit_progress_plot(habit_tracker, selected_habits, figsize=(12, 6), 
         while current <= end_date:
             dates.append(current)
             current_str = current.strftime('%Y-%m-%d')
-            values.append(logs.get(current_str, default_value))
+            # Fix: Use default_value when no log exists
+            value = logs.get(current_str)
+            values.append(value if value is not None else default_value)
             current += timedelta(days=1)
         
         # Plot data with updated styling
