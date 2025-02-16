@@ -336,24 +336,42 @@ class HabitTrackerGUI(QMainWindow):
         self.table.setRowCount(len(habits))
         for row, (habit_id, name, habit_type, target, default_value) in enumerate(habits):
             # Set Name
-            self.table.setItem(row, 0, QTableWidgetItem(name))
+            name_item = QTableWidgetItem(name)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)  # Make name read-only
+            self.table.setItem(row, 0, name_item)
             
             # Set Type
-            self.table.setItem(row, 1, QTableWidgetItem(habit_type))
+            type_item = QTableWidgetItem(habit_type)
+            type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)  # Make type read-only
+            self.table.setItem(row, 1, type_item)
             
             # Set Target - Modified to show 'Yes' for boolean habits
             if habit_type == 'boolean':
                 target_display = 'Yes'  # Boolean habits always target 'Yes'
             else:
                 target_display = str(target) if target else ''
-            self.table.setItem(row, 2, QTableWidgetItem(target_display))
+            target_item = QTableWidgetItem(target_display)
+            target_item.setFlags(target_item.flags() & ~Qt.ItemFlag.ItemIsEditable)  # Make target read-only
+            self.table.setItem(row, 2, target_item)
             
             # Set Default Value - Show 'Yes'/'No' for boolean habits
             if habit_type == 'boolean':
                 default_display = 'Yes' if default_value == 1 else 'No'
+                # Create combobox for boolean default
+                default_combo = QComboBox()
+                default_combo.addItems(['Yes', 'No'])
+                default_combo.setCurrentText(default_display)
+                default_combo.setProperty('habit_id', habit_id)
+                default_combo.setProperty('is_default', True)
+                default_combo.currentTextChanged.connect(self.on_default_value_changed)
+                self.table.setCellWidget(row, 3, default_combo)
             else:
-                default_display = str(default_value)
-            self.table.setItem(row, 3, QTableWidgetItem(default_display))
+                default_item = QTableWidgetItem(str(default_value))
+                default_item.setData(Qt.ItemDataRole.UserRole, {
+                    'habit_id': habit_id,
+                    'is_default': True
+                })
+                self.table.setItem(row, 3, default_item)
             
             # Get last 7 days of logs
             for i in range(7):
@@ -427,6 +445,33 @@ class HabitTrackerGUI(QMainWindow):
         except sqlite3.Error as e:
             QMessageBox.critical(self, 'Error', f'Error saving habit log: {str(e)}')
 
+    def on_default_value_changed(self, text):
+        sender = self.sender()
+        if not isinstance(sender, QComboBox):
+            return
+            
+        habit_id = sender.property('habit_id')
+        is_default = sender.property('is_default')
+        
+        if not is_default:
+            return
+            
+        value = 1 if text == 'Yes' else 0
+        
+        try:
+            self.habit_tracker.cursor.execute("""
+                UPDATE habits 
+                SET default_value = ? 
+                WHERE id = ?
+            """, (value, habit_id))
+            
+            self.habit_tracker.conn.commit()
+            self.refresh_progress_view()
+            
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, 'Error', f'Error updating default value: {str(e)}')
+            self.refresh_table()
+
     def on_numeric_value_changed(self, item):
         # Disconnect to prevent recursive signals
         self.table.itemChanged.disconnect(self.on_numeric_value_changed)
@@ -438,7 +483,7 @@ class HabitTrackerGUI(QMainWindow):
                 return
             
             habit_id = data['habit_id']
-            date_str = data['date']
+            is_default = data.get('is_default', False)
             
             # Get and validate the new value
             try:
@@ -454,21 +499,31 @@ class HabitTrackerGUI(QMainWindow):
                 self.refresh_table()
                 return
             
-            # Update database
-            if value is not None:
-                # First try to update existing record
-                self.habit_tracker.cursor.execute("""
-                    UPDATE habit_logs 
-                    SET value = ? 
-                    WHERE habit_id = ? AND date = ?
-                """, (value, habit_id, date_str))
-                
-                # If no record was updated, insert new record
-                if self.habit_tracker.cursor.rowcount == 0:
+            if is_default:
+                # Update default value in habits table
+                if value is not None:
                     self.habit_tracker.cursor.execute("""
-                        INSERT INTO habit_logs (habit_id, value, date)
-                        VALUES (?, ?, ?)
-                    """, (habit_id, value, date_str))
+                        UPDATE habits 
+                        SET default_value = ? 
+                        WHERE id = ?
+                    """, (value, habit_id))
+            else:
+                # Update log value
+                date_str = data['date']
+                if value is not None:
+                    # First try to update existing record
+                    self.habit_tracker.cursor.execute("""
+                        UPDATE habit_logs 
+                        SET value = ? 
+                        WHERE habit_id = ? AND date = ?
+                    """, (value, habit_id, date_str))
+                    
+                    # If no record was updated, insert new record
+                    if self.habit_tracker.cursor.rowcount == 0:
+                        self.habit_tracker.cursor.execute("""
+                            INSERT INTO habit_logs (habit_id, value, date)
+                            VALUES (?, ?, ?)
+                        """, (habit_id, value, date_str))
             
             self.habit_tracker.conn.commit()
             self.refresh_progress_view()
